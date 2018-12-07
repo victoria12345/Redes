@@ -1,9 +1,9 @@
 /***************************************************************************
  interface.c
  Funciones necesarias en la practica 3 para extraer la configuracion de interface/socket/enlace
- 
+
  Autor: Jose Luis Garcia Dorado
- 2018 EPS-UAM 
+ 2018 EPS-UAM
 ***************************************************************************/
 
 #include <stdio.h>
@@ -223,7 +223,7 @@ uint8_t obtenerGateway(char * interface, uint8_t* retorno){
 uint8_t obtenerPuertoOrigen(uint16_t* puerto){
 	struct sockaddr_in  sock_addr;
    	int c;
-    	fd_set rfds;   
+    	fd_set rfds;
 	sock = socket( AF_INET, SOCK_DGRAM, 0 );
 	if(sock == -1){
 		perror("El socket no pudo ser creado !\n");
@@ -238,7 +238,7 @@ uint8_t obtenerPuertoOrigen(uint16_t* puerto){
 	if(bind(sock, (struct sockaddr *)&sock_addr, sizeof(sock_addr) )==-1){
 		perror("El socket no pudo ser enlazado a un puerto libre !\n");
 		return ERROR;
-	} 
+	}
 	socklen_t addrlen=sizeof(sock_addr);
 	if(getsockname(sock, (struct sockaddr *)&sock_addr, &addrlen)==0)
 		*puerto=ntohs(sock_addr.sin_port);

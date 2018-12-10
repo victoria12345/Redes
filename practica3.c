@@ -369,29 +369,248 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 	uint8_t protocolo_inferior=pila_protocolos[2];
 	pila_protocolos++;
 	uint8_t mascara[IP_ALEN],IP_rango_origen[IP_ALEN],IP_rango_destino[IP_ALEN];
+	uint16_t mtu;
+	uint8_t *puerta_enlace;
+	uint8_t *suma_control;
+	uint16_t len_fragmento;
+	int num_paquete;
+	int i;
 
 	printf("modulo IP(%"PRIu16") %s %d.\n",protocolo_inferior,__FILE__,__LINE__);
-
+	
 	Parametros ipdatos=*((Parametros*)parametros);
 	uint8_t* IP_destino=ipdatos.IP_destino;
+	
+	//Obtenemos la MTU.
+	if(obtenerMTUInterface(interface, &mtu) == ERROR){
+		return ERROR;
+	}
+	
+	//Obtenemos la IP origen y la mascara de la interfaz y aplicamos la mascara a las IP origen y destino.
+	if(obtenerIPInterface(interface, IP_origen) == ERROR){
+		return ERROR;
+	}
+	
+	if(obtenerMascaraInterface(interface, mascara) == ERROR){
+		return ERROR;
+	}
+	
+	if(aplicarMascara(IP_origen, mascara, IP_ALEN, IP_rango_origen) == ERROR){
+		return ERROR;
+	}
+	
+	if(aplicarMascara(IP_destino, mascara, IP_ALEN, IP_rango_destino) == ERROR){
+		return ERROR;
+	}
+	
+	//Comprobamos si la direccion destino esta en la misma subred que la direccion origen y realizamos el ARPrequest contingente.
+	if((IP_rango_origen[0] == IP_rango_destino[0]) && (IP_rango_origen[1] == IP_rango_destino[1]) && (IP_rango_origen[2] == IP_rango_destino[2]) && (IP_rango_origen[3] == IP_rango_destino[3])){
+		printf("La direccion de destino se encuentra en la misma subred que la direccion origen");
+		
+		if(solicitudARP(interface, IP_destino, ipdatos.ETH_destino) == ERROR){
+			return ERROR;
+		}
+		
+	}else{
+		prinf("La direccion de destino no se encuentra en la misma subred que la direccion de origen");
+		
+		//Obtenemos la puerta de enlace y realizamos el ARPrequest sobre la misma.
+		puerta_enlace = (uint8_t*)malloc(IP_ALEN);
+		if(obtenerGateway(interface, puerta_enlace) == ERROR){
+			return ERROR;
+		}
+		
+		if(solicitudARP(interface, puerta_enlace, ipdatos.ETH_destino) == ERROR){
+			free(puerta_enlace);
+			return ERROR;
+		}
+	}
 
-	//Rellenamos la version.
-	aux8 = 4;
-	memcpy(segmento+pos, &aux8, sizeof(uint8_t)/2);
-	pos += sizeof(uint8_t)/2;
+	//Rellenamos la cabecera o cabeceras dependiendo si el paquete necesita fragmentacion o no.
+	if(longitud > mtu - IP_HLEN){
+		printf("El paquete es demasiado grande, necesita fragmentacion");
+		
+		//Calculamos el numero de fragmentos.
+		num_paquete = ceil(longitud*1.0/(mtu - IP_HLEN));
+		
+		for(i = 0; i < num_paquete; i++){
+			memset(datagrama, 0, IP_DATAGRAM_MAX);
 
-	//Rellenamos tamaño de la cabecera.
-
-	//Rellenamos tipo de servicio.
-
-	//TODO
-	//Llamar a solicitudARP(...) adecuadamente y usar ETH_destino de la estructura parametros
-	//[...]
-	//TODO A implementar el datagrama y fragmentación, asi como control de tamano segun bit DF
-	//[...]
-	//llamada/s a protocolo de nivel inferior [...]
-
-
+			//Concatenamos el valor de version y ihl para copiarlos en una sola vez. 
+			//En este caso la version siempre sera 4 y la longitud 6.
+			aux8 = 0x46;
+			memcpy(datagrama+pos, &aux8, sizeof(uint8_t));
+			pos += sizeof(uint8_t);
+			
+			//Rellenamos el tipo de servicio, en nuestro caso será el rutinario.
+			aux8 = 0;
+			memcpy(datagrama+pos, &aux8, sizeof(uint8_t));
+			pos += sizeof(uint8_t);
+			
+			//Rellenamos la longitud total, al estar el paquete fragmentado se rellena con la longitud del fragmento.
+			//En nuestro caso (Ethernet), la longitud es siempre 1500 excepto en el ultimo fragmento.
+			
+			if(i == num_paquete -1){
+				len_fragmento = longitud - (num_paquete - 1)*(floor((mtu - IP_HLEN)/8)*8) + IP_HLEN;
+				
+			}else{
+				len_fragmento = floor((mtu - IP_HLEN)/8)*8 + IP_HLEN;
+				
+			}
+	
+			aux16 = htons(len_fragmento);
+			memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+			pos += sizeof(uint16_t);
+			
+			//Rellenamos el identificador.
+			aux16 = htons(cont + 1);
+			memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+			pos += sizeof(uint16_t);
+			
+			//Rellenamos las flags y posicion. Para el ultimo fragmento los bits de flags seran 010 y para los demás 001.
+			//La posicion sera el numero de bytes del fragmento sin contar la cabecera.
+			aux16 = (floor((mtu - IP_HLEN)/8)*8*i)/8;
+			if(i == num_paquete - 1){
+				aux16 = htons(0x0000 | aux16);
+			
+			}else{
+				aux16 = htons(0x2000 | aux16);
+				
+			}
+			
+			memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+			pos += sizeof(uint16_t);
+			
+			//Rellenamos tiempo de vida.
+			aux8 = 64;
+			memcpy(datagrama+pos, &aux8, sizeof(uint8_t));
+			pos += sizeof(uint8_t);
+			
+			//Rellenamos el protocolo de nivel superior.
+			memcpy(datagrama+pos, &protocolo_superior, sizeof(uint8_t));
+			pos += sizeof(uint8_t);
+			
+			//Rellenamos el checksum por primera vez todo a 0.
+			pos_control = pos;
+			aux16 = 0;
+			memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+			pos += sizeof(uint16_t);
+			
+			//Rellenamos la direccion IP origen.
+			memcpy(datagrama+pos, IP_origen, sizeof(uint32_t));
+			pos += sizeof(uint32_t);
+			
+			//Rellenamos la direccion IP destino.
+			memcpy(datagrama+pos, IP_destino, sizeof(uint32_t));
+			pos += sizeof(uint32_t);		
+			
+			//Rellenaos los campos de opciones y relleno todos a 0.
+			aux32 = 0;
+			memcpy(datagrama+pos, &aux32, sizeof(uint32_t));
+			pos += sizeof(uint32_t);
+			
+			//Calculamos el checksum final.
+			suma_control = (uint8_t*)malloc(sizeof(uint16_t));
+			if(calcularChecksum(IP_HLEN, datagrama, suma_control) == ERROR){
+				return ERROR;
+			}
+			
+			memcpy(datagrama+pos_control, suma_control, sizeof(uint16_t));
+			free(suma_control);
+			
+			//Rellenamos despues del datagrama los maximos bytes posibles del segmento, 1476 (mtu - IP_HLEN).
+			memcpy(datagrama+pos, segmento+(mtu - IP_HLEN)*i, len_fragmento - IP_HLEN);
+			pos = pos + len_fragmento - IP_HLEN
+			
+			if(i == numpack - 1){
+				return protocolos_registrados[protocolo_inferior](datagrama,len_fragmento,pila_protocolos,&ipdatos);
+				
+			}else{
+				if(protocolos_registrados[protocolo_inferior](datagrama,len_fragmento,pila_protocolos,&ipdatos) == ERROR){
+					return ERROR;
+				}
+			}
+				
+			
+		}
+		
+				
+	}else{
+		prinf("El paquete no necesita fragmentacion");
+		
+		num_paquete = 1;
+		
+		//Concatenamos el valor de version y ihl para copiarlos en una sola vez. 
+		//En este caso la version siempre sera 4 y la longitud 6.
+		aux8 = 0x46;
+		memcpy(datagrama+pos, &aux8, sizeof(uint8_t));
+		pos += sizeof(uint8_t);
+		
+		//Rellenamos el tipo de servicio, en nuestro caso será el rutinario.
+		aux8 = 0;
+		memcpy(datagrama+pos, &aux8, sizeof(uint8_t));
+		pos += sizeof(uint8_t);
+		
+		//Rellenamos la longitud total.
+		aux16 = htons(longitud + IP_HLEN);
+		memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+		pos += sizeof(uint16_t);
+		
+		//Rellenamos el identificador.
+		aux16 = htons(cont + 1);
+		memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+		pos += sizeof(uint16_t);
+		
+		//Rellenamos flags y posicion a la vez, marcando a 1 el bit de divisibilidad de las flags (bit 1) y dejando a 0 la posicion.
+		aux16 = 0;
+		aux16 = htons(0x4000 | aux16);
+		memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+		pos += sizeof(uint16_t);
+		
+		//Rellenamos tiempo de vida.
+		aux8 = 64;
+		memcpy(datagrama+pos, &aux8, sizeof(uint8_t));
+		pos += sizeof(uint8_t);
+		
+		//Rellenamos el protocolo de nivel superior.
+		memcpy(datagrama+pos, &protocolo_superior, sizeof(uint8_t));
+		pos += sizeof(uint8_t);
+		
+		//Rellenamos el checksum por primera vez todo a 0.
+		pos_control = pos;
+		aux16 = 0;
+		memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
+		pos += sizeof(uint16_t);
+		
+		//Rellenamos la direccion IP origen.
+		memcpy(datagrama+pos, IP_origen, sizeof(uint32_t));
+		pos += sizeof(uint32_t);
+		
+		//Rellenamos la direccion IP destino.
+		memcpy(datagrama+pos, IP_destino, sizeof(uint32_t));
+		pos += sizeof(uint32_t);		
+		
+		//Rellenaos los campos de opciones y relleno todos a 0.
+		aux32 = 0;
+		memcpy(datagrama+pos, &aux32, sizeof(uint32_t));
+		pos += sizeof(uint32_t);
+		
+		//Calculamos el checksum final.
+		suma_control = (uint8_t*)malloc(sizeof(uint16_t));
+		if(calcularChecksum(IP_HLEN, datagrama, suma_control) == ERROR){
+			return ERROR;
+		}
+		
+		memcpy(datagrama+pos_control, suma_control, sizeof(uint16_t));
+		free(suma_control);
+		
+		//Rellenamos el segmento.
+		memcpy(datagrama+pos, segmento, longitud);
+		
+		return protocolos_registrados[protocolo_inferior](datagrama,longitud+pos,pila_protocolos,&ipdatos);
+	}
+	
+	return ERROR;
 }
 
 

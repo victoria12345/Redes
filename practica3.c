@@ -335,8 +335,7 @@ uint8_t moduloUDP(uint8_t* mensaje, uint32_t longitud, uint16_t* pila_protocolos
 	pos += sizeof(uint16_t);
 
 	//Rellenamos el campo Checksum.
-	aux16 = 0;
-	memcpy(segmento+pos, &aux16, sizeof(uint16_t));
+	memcpy(segmento+pos, &suma_control, sizeof(uint16_t));
 	pos += sizeof(uint16_t);
 
 	//Rellenamos el mensaje.
@@ -373,7 +372,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 	uint8_t *puerta_enlace;
 	uint8_t *suma_control;
 	uint16_t len_fragmento;
-	int num_paquete;
+	int num_paquetes;
 	int i;
 
 	printf("modulo IP(%"PRIu16") %s %d.\n",protocolo_inferior,__FILE__,__LINE__);
@@ -412,7 +411,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 		}
 		
 	}else{
-		prinf("La direccion de destino no se encuentra en la misma subred que la direccion de origen");
+		printf("La direccion de destino no se encuentra en la misma subred que la direccion de origen");
 		
 		//Obtenemos la puerta de enlace y realizamos el ARPrequest sobre la misma.
 		puerta_enlace = (uint8_t*)malloc(IP_ALEN);
@@ -431,9 +430,9 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 		printf("El paquete es demasiado grande, necesita fragmentacion");
 		
 		//Calculamos el numero de fragmentos.
-		num_paquete = ceil(longitud*1.0/(mtu - IP_HLEN));
+		num_paquetes = ceil(longitud*1.0/(mtu - IP_HLEN));
 		
-		for(i = 0; i < num_paquete; i++){
+		for(i = 0; i < num_paquetes; i++){
 			memset(datagrama, 0, IP_DATAGRAM_MAX);
 
 			//Concatenamos el valor de version y ihl para copiarlos en una sola vez. 
@@ -450,8 +449,8 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 			//Rellenamos la longitud total, al estar el paquete fragmentado se rellena con la longitud del fragmento.
 			//En nuestro caso (Ethernet), la longitud es siempre 1500 excepto en el ultimo fragmento.
 			
-			if(i == num_paquete -1){
-				len_fragmento = longitud - (num_paquete - 1)*(floor((mtu - IP_HLEN)/8)*8) + IP_HLEN;
+			if(i == num_paquetes - 1){
+				len_fragmento = longitud - (num_paquetes - 1)*(floor((mtu - IP_HLEN)/8)*8) + IP_HLEN;
 				
 			}else{
 				len_fragmento = floor((mtu - IP_HLEN)/8)*8 + IP_HLEN;
@@ -470,7 +469,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 			//Rellenamos las flags y posicion. Para el ultimo fragmento los bits de flags seran 010 y para los demás 001.
 			//La posicion sera el numero de bytes del fragmento sin contar la cabecera.
 			aux16 = (floor((mtu - IP_HLEN)/8)*8*i)/8;
-			if(i == num_paquete - 1){
+			if(i == num_paquetes - 1){
 				aux16 = htons(0x0000 | aux16);
 			
 			}else{
@@ -511,7 +510,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 			
 			//Calculamos el checksum final.
 			suma_control = (uint8_t*)malloc(sizeof(uint16_t));
-			if(calcularChecksum(IP_HLEN, datagrama, suma_control) == ERROR){
+			if(calcularChecksum(datagrama, IP_HLEN, suma_control) == ERROR){
 				return ERROR;
 			}
 			
@@ -520,9 +519,9 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 			
 			//Rellenamos despues del datagrama los maximos bytes posibles del segmento, 1476 (mtu - IP_HLEN).
 			memcpy(datagrama+pos, segmento+(mtu - IP_HLEN)*i, len_fragmento - IP_HLEN);
-			pos = pos + len_fragmento - IP_HLEN
+			pos = pos + len_fragmento - IP_HLEN;
 			
-			if(i == numpack - 1){
+			if(i == num_paquetes - 1){
 				return protocolos_registrados[protocolo_inferior](datagrama,len_fragmento,pila_protocolos,&ipdatos);
 				
 			}else{
@@ -536,9 +535,9 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 		
 				
 	}else{
-		prinf("El paquete no necesita fragmentacion");
+		printf("El paquete no necesita fragmentacion");
 		
-		num_paquete = 1;
+		num_paquetes = 1;
 		
 		//Concatenamos el valor de version y ihl para copiarlos en una sola vez. 
 		//En este caso la version siempre sera 4 y la longitud 6.
@@ -597,7 +596,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 		
 		//Calculamos el checksum final.
 		suma_control = (uint8_t*)malloc(sizeof(uint16_t));
-		if(calcularChecksum(IP_HLEN, datagrama, suma_control) == ERROR){
+		if(calcularChecksum(datagrama, IP_HLEN, suma_control) == ERROR){
 			return ERROR;
 		}
 		
@@ -636,7 +635,7 @@ uint8_t moduloETH(uint8_t* datagrama, uint32_t longitud, uint16_t* pila_protocol
 	struct pcap_pkthdr header;
 	struct timeval time;
 
-	pila_protocolos++:
+	pila_protocolos++;
 
 	printf("modulo ETH(fisica) %s %d.\n",__FILE__,__LINE__);
 

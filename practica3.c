@@ -41,10 +41,13 @@ int main(int argc, char **argv){
 	char data[IP_DATAGRAM_MAX];
 	uint16_t pila_protocolos[CADENAS];
 
-
 	int long_index=0;
 	char opt;
 	char flag_iface = 0, flag_ip = 0, flag_port = 0, flag_file = 0, flag_dontfrag = 0, flag_mostrar = 0;
+	
+	FILE *f = NULL;
+	uint64_t file_size = 0;
+	char *aux_data = NULL;
 
 	static struct option options[] = {
 		{"if",required_argument,0,'1'},
@@ -66,6 +69,7 @@ int main(int argc, char **argv){
 				flag_iface = 1;
 				//Por comodidad definimos interface como una variable global
 				sprintf(interface,"%s",optarg);
+				printf("%s", interface);
 				break;
 
 			case '2' :
@@ -97,7 +101,35 @@ int main(int argc, char **argv){
 					sprintf(fichero_pcap_destino,"%s%s","stdin",".pcap");
 				} else {
 					sprintf(fichero_pcap_destino,"%s%s",optarg,".pcap");
-					//TODO Leer fichero en data [...]
+					f = fopen(optarg, "r");
+					if(f == NULL){
+						printf("Error, el fichero no existe");
+						return ERROR;
+					}
+					
+					//Comprobamos que no esta vacio.
+					if(fgets(data, sizeof data, f) == NULL){
+						printf("Error leyendo desde fichero: %s %s %d.\n",errbuf,__FILE__,__LINE__);
+						fclose(f);
+						return ERROR;
+					}
+					
+					//Comprobamos que el tamaño del fichero no exceda el maximo permitido y leemos.
+					fseek(f, 0, SEEK_END);
+					file_size = ftell(f);
+					if(file_size >= IP_DATAGRAM_MAX){
+						printf("El fichero supera el tamaño maximo permitido para el datagrama"),
+						fclose(f);
+						return ERROR;
+					}
+					
+					fseek(f, 0, SEEK_SET);
+					aux_data = (char*)malloc(sizeof(char)*(file_size+1));
+					fread(aux_data, file_size, 1, f);
+					aux_data[file_size] = 0;
+					fclose(f);
+					strcpy(data, aux_data);
+					free(aux_data);
 				}
 				flag_file = 1;
 				break;

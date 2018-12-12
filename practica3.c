@@ -22,7 +22,7 @@ pcap_dumper_t * pdumper;//y salida a pcap
 uint64_t cont=0;	//Contador numero de mensajes enviados
 char interface[10];	//Interface donde transmitir por ejemplo "eth0"
 uint16_t ID=1;		//Identificador IP
-
+char flag_dontfrag = 0, flag_mostrar = 0;
 
 void handleSignal(int nsignal){
 	printf("Control C pulsado (%"PRIu64")\n", cont);
@@ -31,7 +31,7 @@ void handleSignal(int nsignal){
 }
 
 int main(int argc, char **argv){
-
+	
 	char errbuf[PCAP_ERRBUF_SIZE];
 	char fichero_pcap_destino[CADENAS];
 	uint8_t IP_destino_red[IP_ALEN];
@@ -43,7 +43,7 @@ int main(int argc, char **argv){
 
 	int long_index=0;
 	char opt;
-	char flag_iface = 0, flag_ip = 0, flag_port = 0, flag_file = 0, flag_dontfrag = 0, flag_mostrar = 0;
+	char flag_iface = 0, flag_ip = 0, flag_port = 0, flag_file = 0;
 	
 	FILE *f = NULL;
 	uint64_t file_size = 0;
@@ -215,11 +215,12 @@ int main(int argc, char **argv){
 	else	cont++;
 
 	printf("Enviado mensaje %"PRIu64", almacenado en %s\n\n\n", cont,fichero_pcap_destino);
-
-		//Cerramos descriptores
+	
+	//Cerramos descriptores
 	pcap_close(descr);
 	pcap_dump_close(pdumper);
 	pcap_close(descr2);
+
 	return OK;
 }
 
@@ -436,14 +437,14 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 	
 	//Comprobamos si la direccion destino esta en la misma subred que la direccion origen y realizamos el ARPrequest contingente.
 	if((IP_rango_origen[0] == IP_rango_destino[0]) && (IP_rango_origen[1] == IP_rango_destino[1]) && (IP_rango_origen[2] == IP_rango_destino[2]) && (IP_rango_origen[3] == IP_rango_destino[3])){
-		printf("La direccion de destino se encuentra en la misma subred que la direccion origen");
+		printf("La direccion de destino se encuentra en la misma subred que la direccion origen\n");
 		
 		if(solicitudARP(interface, IP_destino, ipdatos.ETH_destino) == ERROR){
 			return ERROR;
 		}
 		
 	}else{
-		printf("La direccion de destino no se encuentra en la misma subred que la direccion de origen");
+		printf("La direccion de destino no se encuentra en la misma subred que la direccion de origen\n");
 		
 		//Obtenemos la puerta de enlace y realizamos el ARPrequest sobre la misma.
 		puerta_enlace = (uint8_t*)malloc(IP_ALEN);
@@ -459,7 +460,11 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 
 	//Rellenamos la cabecera o cabeceras dependiendo si el paquete necesita fragmentacion o no.
 	if(longitud > mtu - IP_HLEN){
-		printf("El paquete es demasiado grande, necesita fragmentacion");
+		if(flag_dontfrag == 1){
+			printf("Error: El paquete necesita fragmentacion pero se ha solicitado que no se fragmente (-d)\n");
+			return ERROR;
+		}
+		printf("El paquete es demasiado grande, necesita fragmentacion\n");
 		
 		//Calculamos el numero de fragmentos.
 		num_paquetes = ceil(longitud*1.0/(mtu - IP_HLEN));
@@ -498,7 +503,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 			memcpy(datagrama+pos, &aux16, sizeof(uint16_t));
 			pos += sizeof(uint16_t);
 			
-			//Rellenamos las flags y posicion. Para el ultimo fragmento los bits de flags seran 010 y para los demás 001.
+			//Rellenamos las flags y posicion. Para el ultimo fragmento los bits de flags seran 000 y para los demás 001.
 			//La posicion sera el numero de bytes del fragmento sin contar la cabecera.
 			aux16 = (floor((mtu - IP_HLEN)/8)*8*i)/8;
 			if(i == num_paquetes - 1){
@@ -567,7 +572,7 @@ uint8_t moduloIP(uint8_t* segmento, uint32_t longitud, uint16_t* pila_protocolos
 		
 				
 	}else{
-		printf("El paquete no necesita fragmentacion");
+		printf("El paquete no necesita fragmentacion\n");
 		
 		num_paquetes = 1;
 		
@@ -677,7 +682,7 @@ uint8_t moduloETH(uint8_t* datagrama, uint32_t longitud, uint16_t* pila_protocol
 	}
 
 	if(longitud > aux16){
-		printf("El mensaje supera el tamaño maximo");
+		printf("El mensaje supera el tamaño maximo\n");
 		return ERROR;
 	}
 
@@ -691,7 +696,7 @@ uint8_t moduloETH(uint8_t* datagrama, uint32_t longitud, uint16_t* pila_protocol
 	//Rellenamos la dirección ETH origen
 	eth_origen = (uint8_t*)malloc(sizeof(uint8_t)*ETH_ALEN);
 	if(obtenerMACdeInterface(interface, eth_origen) == ERROR){
-		printf("Error al obtener la direcion ETH origen");
+		printf("Error al obtener la direcion ETH origen\n");
 		return ERROR;
 	}
 	memcpy(trama+pos, eth_origen, ETH_ALEN);
@@ -716,9 +721,11 @@ uint8_t moduloETH(uint8_t* datagrama, uint32_t longitud, uint16_t* pila_protocol
 	header.len = longitud+pos;
 	pcap_dump((uint8_t*)pdumper, &header, trama);
 
-	//Mostramos el contenido del paquete en hexadecimal.
+	//Mostramos el contenido del paquete en hexadecimal si nos lo indican al ejecutar el programa.
 	printf("\n");
-	mostrarHex(trama, longitud+pos);
+	if(flag_mostrar == 1){
+		mostrarHex(trama, longitud+pos);
+	}
 	printf("\n");
 	
 	return OK;
